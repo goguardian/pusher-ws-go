@@ -245,6 +245,7 @@ func (c *Client) Subscribe(channelName string) (Channel, error) {
 		default:
 			ch = baseChan
 		}
+		c.subscribedChannels[channelName] = ch
 	}
 
 	return ch, ch.Subscribe()
