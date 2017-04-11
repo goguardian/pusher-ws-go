@@ -1,23 +1,8 @@
-go-pusher
-=========
+# pusher-ws-go
 
-A golang Pusher client ()
+[![GoDoc](https://godoc.org/github.com/goguardian/pusher-ws-go?status.svg)](https://godoc.org/github.com/goguardian/pusher-ws-go)
 
+This package implements a Pusher websocket client. It is based on the official [Pusher JavaScript client libary](https://github.com/pusher/pusher-js) as well as [go-pusher](https://github.com/toorop/go-pusher).
 
 ## Installation
-	$  go get github.com/toorop/go-pusher
-	
-## Usage
-See client.go in examples folder	
-
-## Todo
-* Pusher Server
-
-
-
-Donate
-------
-
-![Donation QR](http://api.qrserver.com/v1/create-qr-code/?size=200x200&data=bitcoin:1HgpsmxV52eAjDcoNpVGpYEhGfgN7mM1JB%3Flabel%3DToorop)
-
-[1HgpsmxV52eAjDcoNpVGpYEhGfgN7mM1JB](http://tinyurl.com/mccsoez)
+	$ go get github.com/goguardian/pusher-ws-go

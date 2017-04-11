@@ -40,11 +40,21 @@ type boundEventChans map[chan Event]struct{}
 
 type subscribedChannels map[string]Channel
 
+// Client represents a Pusher websocket client. After creating an instance, it
+// is necessary to call Connect to establish the connection with Pusher. Calling
+// any other methods before a connection is established is an invalid operation
+// and may panic.
 type Client struct {
-	AuthURL  string
+	// The URL to call when authenticating private or presence channels.
+	AuthURL string
+	// Whether to connect to Pusher over an insecure websocket connection.
 	Insecure bool
-	Cluster  string
+	// The cluster to connect to. The default is Pusher's "mt1" cluster in the
+	// "us-east-1" region.
+	Cluster string
 
+	// If provided, errors that occur while receiving messages and errors emitted
+	// by Pusher will be sent to this channel.
 	Errors chan error
 
 	socketID string
@@ -70,6 +80,8 @@ type connectionData struct {
 	ActivityTimeout int    `json:"activity_timeout"`
 }
 
+// UnmarshalDataString is a convenience function to unmarshal double-encoded
+// JSON data from a Pusher event. See https://pusher.com/docs/pusher_protocol#double-encoding
 func UnmarshalDataString(data json.RawMessage, dest interface{}) error {
 	var dataStr string
 	err := json.Unmarshal(data, &dataStr)
@@ -80,6 +92,7 @@ func UnmarshalDataString(data json.RawMessage, dest interface{}) error {
 	return json.Unmarshal([]byte(dataStr), dest)
 }
 
+// Connect establishes a connection to the Pusher app specified by appKey.
 func (c *Client) Connect(appKey string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -205,6 +218,11 @@ func (c *Client) listen() {
 	}
 }
 
+// Subscribe creates a subscription to the specified channel. Authentication will
+// be attempted for private and presence channels.Note that a nil error does not
+// mean that the subscription was succesful, just that the request was sent. If
+// the channel has already been subscribed, this method will return the existing
+// Channel instance.
 func (c *Client) Subscribe(channelName string) (Channel, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -232,6 +250,9 @@ func (c *Client) Subscribe(channelName string) (Channel, error) {
 	return ch, ch.Subscribe()
 }
 
+// Unsubscribe unsubscribes from the specified channel. Events will no longer
+// be received from that channe. Note that a nil error does not mean that the
+// unsubscription was succesful, just that the request was sent.
 func (c *Client) Unsubscribe(channelName string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -245,6 +266,8 @@ func (c *Client) Unsubscribe(channelName string) error {
 	return ch.Unsubscribe()
 }
 
+// Bind returns a channel to which all matching events received on the connection
+// will be sent.
 func (c *Client) Bind(event string) chan Event {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -259,6 +282,8 @@ func (c *Client) Bind(event string) chan Event {
 	return boundChan
 }
 
+// Unbind removes bindings for an event. If chans are passed, only those bindings
+// will be removed. Otherwise, all bindings for an event will be removed.
 func (c *Client) Unbind(event string, chans ...chan Event) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -274,6 +299,7 @@ func (c *Client) Unbind(event string, chans ...chan Event) {
 	}
 }
 
+// SendEvent sends an event on the Pusher connection.
 func (c *Client) SendEvent(event string, data interface{}, channelName string) error {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
@@ -291,6 +317,8 @@ func (c *Client) SendEvent(event string, data interface{}, channelName string) e
 	return websocket.JSON.Send(c.ws, e)
 }
 
+// Disconnect closes the websocket connection to Pusher. Any subsequent operations
+// are invalid until Connect is called again.
 func (c *Client) Disconnect() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
