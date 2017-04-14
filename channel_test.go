@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -269,6 +270,8 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 		wantChannel := "foo"
 		wantSocketID := "bar"
 		wantAuth := "baz"
+		wantParams := url.Values{"foo": {"bar"}}
+		wantHeaders := http.Header{"Authorization": {"Bearer baz"}}
 
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
@@ -312,6 +315,18 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 			if gotChannel := r.PostFormValue("channel_name"); gotChannel != wantChannel {
 				t.Errorf("Expected channel param to be %q, got %q", wantChannel, gotChannel)
 			}
+			for key := range wantParams {
+				wantVal := wantParams.Get(key)
+				if gotVal := r.PostFormValue(key); gotVal != wantVal {
+					t.Errorf("Expected param %q to be %q, got %q", key, wantVal, gotVal)
+				}
+			}
+			for key := range wantHeaders {
+				wantVal := wantHeaders.Get(key)
+				if gotVal := r.Header.Get(key); gotVal != wantVal {
+					t.Errorf("Expected header %q to be %q, got %q", key, wantVal, gotVal)
+				}
+			}
 
 			err = json.NewEncoder(w).Encode(subscribeData{
 				Auth: wantAuth,
@@ -327,9 +342,11 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 				name:       wantChannel,
 				subscribed: false,
 				client: &Client{
-					ws:       ws,
-					socketID: wantSocketID,
-					AuthURL:  authSrv.URL,
+					ws:          ws,
+					socketID:    wantSocketID,
+					AuthURL:     authSrv.URL,
+					AuthParams:  wantParams,
+					AuthHeaders: wantHeaders,
 				},
 			},
 		}

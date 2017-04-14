@@ -138,7 +138,25 @@ func (c *privateChannel) Subscribe() error {
 	body := url.Values{}
 	body.Set("socket_id", c.client.socketID)
 	body.Set("channel_name", c.name)
-	res, err := http.Post(c.client.AuthURL, "application/x-www-form-urlencoded", strings.NewReader(body.Encode()))
+	for key, vals := range c.client.AuthParams {
+		for _, val := range vals {
+			body.Add(key, val)
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.client.AuthURL, strings.NewReader(body.Encode()))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for key, vals := range c.client.AuthHeaders {
+		for _, val := range vals {
+			req.Header.Add(key, val)
+		}
+	}
+
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
