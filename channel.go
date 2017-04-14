@@ -14,10 +14,10 @@ type Channel interface {
 	// Subscribe attempts to subscribe to the channel if the subscription is not
 	// already active. Authentication will be attempted for private and presence
 	// channels. Note that a nil error does not mean that the subscription was
-	// succesful, just that the subscription request was sent.
+	// successful, just that the subscription request was sent.
 	Subscribe() error
 	// Unsubscribe attempts to unsubscribe from the channel. Note that a nil error
-	// does not mean that the unsubscription was succesful, just that the request
+	// does not mean that the unsubscription was successful, just that the request
 	// was sent.
 	Unsubscribe() error
 	// Bind returns a channel to which all the data from all matching events received
@@ -26,7 +26,7 @@ type Channel interface {
 	// Unbind removes bindings for an event. If chans are passed, only those bindings
 	// will be removed. Otherwise, all bindings for an event will be removed.
 	Unbind(event string, chans ...chan json.RawMessage)
-	// SendEvent sends an event to the channel.
+	// Trigger sends an event to the channel.
 	Trigger(event string, data interface{}) error
 
 	handleEvent(event string, data json.RawMessage)
@@ -58,6 +58,7 @@ func (c *channel) Subscribe() error {
 	if c.subscribed {
 		return nil
 	}
+
 	return c.client.SendEvent(pusherSubscribe, subscribeData{
 		Channel: c.name,
 	}, "")
