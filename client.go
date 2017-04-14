@@ -3,7 +3,6 @@ package pusher
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +72,10 @@ type Client struct {
 	subscribedChannels subscribedChannels
 
 	mutex sync.RWMutex
+
+	// used for testing
+	overrideHost string
+	overridePort int
 }
 
 type connectionData struct {
@@ -92,25 +95,33 @@ func UnmarshalDataString(data json.RawMessage, dest interface{}) error {
 	return json.Unmarshal([]byte(dataStr), dest)
 }
 
-// Connect establishes a connection to the Pusher app specified by appKey.
-func (c *Client) Connect(appKey string) error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
+func (c *Client) generateConnURL(appKey string) string {
 	scheme, port := secureScheme, securePort
 	if c.Insecure {
 		scheme, port = insecureScheme, insecurePort
+	}
+	if c.overridePort != 0 {
+		port = c.overridePort
 	}
 
 	host := defaultHost
 	if c.Cluster != "" {
 		host = fmt.Sprintf(clusterHostFormat, c.Cluster)
 	}
+	if c.overrideHost != "" {
+		host = c.overrideHost
+	}
 
-	connURL := fmt.Sprintf(connURLFormat, scheme, host, port, appKey, protocolVersion)
+	return fmt.Sprintf(connURLFormat, scheme, host, port, appKey, protocolVersion)
+}
+
+// Connect establishes a connection to the Pusher app specified by appKey.
+func (c *Client) Connect(appKey string) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
 	var err error
-	c.ws, err = websocket.Dial(connURL, "", localOrigin)
+	c.ws, err = websocket.Dial(c.generateConnURL(appKey), "", localOrigin)
 	if err != nil {
 		return err
 	}
@@ -189,7 +200,6 @@ func (c *Client) listen() {
 			if !c.isConnected() {
 				return
 			}
-			log.Println(err)
 			c.sendError(err)
 			continue
 		}

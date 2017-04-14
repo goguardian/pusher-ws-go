@@ -24,7 +24,7 @@ func (e EventError) Error() string {
 
 func extractEventError(event Event) error {
 	var eventErr EventError
-	err := json.Unmarshal([]byte(event.Data), &eventErr)
+	err := json.Unmarshal(event.Data, &eventErr)
 	if err != nil {
 		return err
 	}
