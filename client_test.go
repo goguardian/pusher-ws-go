@@ -102,7 +102,7 @@ func TestClientUnbind(t *testing.T) {
 	wantChan := "foo"
 	t.Run("eventOnly", func(t *testing.T) {
 		client := Client{boundEvents: map[string]boundEventChans{
-			wantChan: boundEventChans{make(chan Event): struct{}{}},
+			wantChan: {make(chan Event): struct{}{}},
 		}}
 		client.Unbind(wantChan)
 
@@ -117,7 +117,7 @@ func TestClientUnbind(t *testing.T) {
 		ch2 := make(chan Event)
 		ch3 := make(chan Event)
 		client := Client{boundEvents: map[string]boundEventChans{
-			wantChan: boundEventChans{
+			wantChan: {
 				ch1: struct{}{},
 				ch2: struct{}{},
 				ch3: struct{}{},
@@ -502,12 +502,12 @@ func TestClientListen(t *testing.T) {
 			connected: true,
 			ws:        ws,
 			boundEvents: map[string]boundEventChans{
-				wantEvent.Event: boundEventChans{eventChan: struct{}{}},
+				wantEvent.Event: {eventChan: struct{}{}},
 			},
 			subscribedChannels: map[string]Channel{
 				wantEvent.Channel: &channel{
 					boundEvents: map[string]boundDataChans{
-						wantEvent.Event: boundDataChans{dataChan: struct{}{}},
+						wantEvent.Event: {dataChan: struct{}{}},
 					},
 				},
 			},

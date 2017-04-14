@@ -237,7 +237,7 @@ func (c *Client) listen() {
 
 // Subscribe creates a subscription to the specified channel. Authentication will
 // be attempted for private and presence channels.Note that a nil error does not
-// mean that the subscription was succesful, just that the request was sent. If
+// mean that the subscription was successful, just that the request was sent. If
 // the channel has already been subscribed, this method will return the existing
 // Channel instance.
 func (c *Client) Subscribe(channelName string) (Channel, error) {
@@ -270,7 +270,7 @@ func (c *Client) Subscribe(channelName string) (Channel, error) {
 
 // Unsubscribe unsubscribes from the specified channel. Events will no longer
 // be received from that channe. Note that a nil error does not mean that the
-// unsubscription was succesful, just that the request was sent.
+// unsubscription was successful, just that the request was sent.
 func (c *Client) Unsubscribe(channelName string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()

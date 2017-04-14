@@ -133,7 +133,7 @@ func TestChannelBind(t *testing.T) {
 func TestChannelUnbind(t *testing.T) {
 	t.Run("eventOnly", func(t *testing.T) {
 		ch := &channel{boundEvents: map[string]boundDataChans{
-			"foo": boundDataChans{make(chan json.RawMessage): struct{}{}},
+			"foo": {make(chan json.RawMessage): struct{}{}},
 		}}
 		ch.Unbind("foo")
 
@@ -147,7 +147,7 @@ func TestChannelUnbind(t *testing.T) {
 		ch2 := make(chan json.RawMessage)
 		ch3 := make(chan json.RawMessage)
 		ch := &channel{boundEvents: map[string]boundDataChans{
-			"foo": boundDataChans{
+			"foo": {
 				ch1: struct{}{},
 				ch2: struct{}{},
 				ch3: struct{}{},
@@ -182,7 +182,7 @@ func TestChannelHandleEvent(t *testing.T) {
 		dataChan := make(chan json.RawMessage)
 		ch := &channel{
 			boundEvents: map[string]boundDataChans{
-				wantEvent: boundDataChans{dataChan: struct{}{}},
+				wantEvent: {dataChan: struct{}{}},
 			},
 		}
 
