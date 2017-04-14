@@ -1,28 +1,32 @@
 package pusher
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
-// EventStub contains just the "type" of event.
-// Knowing the type, we can then unmarshal again, into appropriate type.
-type EventStub struct {
-	Event string `json:"event"`
-}
-
+// Event represents an event sent to or received from a Pusher connection.
 type Event struct {
-	Event string `json:"event"`
-	Data  string `json:"data"`
+	Event   string          `json:"event"`
+	Data    json.RawMessage `json:"data"`
+	Channel string          `json:"channel,omitempty"`
 }
 
-// EventError contains a structured error in its Data field.
-// It implements error.
+// EventError represents an error event received from Pusher.
 type EventError struct {
-	Event string `json:"event"`
-	Data  struct {
-		Message string `json:"message"`
-		Code    int    `json:"code"`
-	} `json:"data"`
+	Message string `json:"message"`
+	Code    int    `json:"code"`
 }
 
-func (ewe EventError) Error() string {
-	return fmt.Sprintf("Pusher return error: code %d, message %q", ewe.Data.Code, ewe.Data.Message)
+func (e EventError) Error() string {
+	return fmt.Sprintf("Pusher error: code %d, message %q", e.Code, e.Message)
+}
+
+func extractEventError(event Event) error {
+	var eventErr EventError
+	err := json.Unmarshal(event.Data, &eventErr)
+	if err != nil {
+		return err
+	}
+	return eventErr
 }

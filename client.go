@@ -2,164 +2,339 @@ package pusher
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
+	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/websocket"
 )
 
+const (
+	pingPayload = `{"event":"pusher:ping","data":"{}"}`
+	pongPayload = `{"event":"pusher:pong","data":"{}"}`
+
+	pusherPing                 = "pusher:ping"
+	pusherPong                 = "pusher:pong"
+	pusherError                = "pusher:error"
+	pusherSubscribe            = "pusher:subscribe"
+	pusherUnsubscribe          = "pusher:unsubscribe"
+	pusherConnEstablished      = "pusher:connection_established"
+	pusherSubSucceeded         = "pusher:subscription_succeeded"
+	pusherInternalSubSucceeded = "pusher_internal:subscription_succeeded"
+
+	localOrigin = "http://localhost/"
+
+	connURLFormat     = "%s://%s:%d/app/%s?protocol=%s"
+	secureScheme      = "wss"
+	securePort        = 443
+	insecureScheme    = "ws"
+	insecurePort      = 80
+	defaultHost       = "ws.pusherapp.com"
+	clusterHostFormat = "ws-%s.pusher.com"
+	protocolVersion   = "7"
+)
+
+type boundEventChans map[chan Event]struct{}
+
+type subscribedChannels map[string]Channel
+
+// Client represents a Pusher websocket client. After creating an instance, it
+// is necessary to call Connect to establish the connection with Pusher. Calling
+// any other methods before a connection is established is an invalid operation
+// and may panic.
 type Client struct {
+	// The URL to call when authenticating private or presence channels.
+	AuthURL string
+	// Whether to connect to Pusher over an insecure websocket connection.
+	Insecure bool
+	// The cluster to connect to. The default is Pusher's "mt1" cluster in the
+	// "us-east-1" region.
+	Cluster string
+
+	// If provided, errors that occur while receiving messages and errors emitted
+	// by Pusher will be sent to this channel.
+	Errors chan error
+
+	socketID string
+	// TODO: make this configurable
+	activityTimeout time.Duration
+	// TODO: implement timeout logic
+	// pongTimeout time.Duration
+
 	ws                 *websocket.Conn
-	Events             chan *Event
-	Stop               chan bool
-	subscribedChannels *subscribedChannels
-	binders            map[string]chan *Event
+	connected          bool
+	activityTimer      *time.Timer
+	activityTimerReset chan struct{}
+	boundEvents        map[string]boundEventChans
+	// TODO: implement global bindings
+	// globalBindings     boundEventChans
+	subscribedChannels subscribedChannels
+
+	mutex sync.RWMutex
+
+	// used for testing
+	overrideHost string
+	overridePort int
 }
 
-// heartbeat send a ping frame to server each - TODO reconnect on disconnect
-func (c *Client) heartbeat() {
-	for !c.Stopped() {
-		websocket.Message.Send(c.ws, `{"event":"pusher:ping","data":"{}"}`)
-		time.Sleep(HEARTBEAT_RATE * time.Second)
+type connectionData struct {
+	SocketID        string `json:"socket_id"`
+	ActivityTimeout int    `json:"activity_timeout"`
+}
+
+// UnmarshalDataString is a convenience function to unmarshal double-encoded
+// JSON data from a Pusher event. See https://pusher.com/docs/pusher_protocol#double-encoding
+func UnmarshalDataString(data json.RawMessage, dest interface{}) error {
+	var dataStr string
+	err := json.Unmarshal(data, &dataStr)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal([]byte(dataStr), dest)
+}
+
+func (c *Client) generateConnURL(appKey string) string {
+	scheme, port := secureScheme, securePort
+	if c.Insecure {
+		scheme, port = insecureScheme, insecurePort
+	}
+	if c.overridePort != 0 {
+		port = c.overridePort
+	}
+
+	host := defaultHost
+	if c.Cluster != "" {
+		host = fmt.Sprintf(clusterHostFormat, c.Cluster)
+	}
+	if c.overrideHost != "" {
+		host = c.overrideHost
+	}
+
+	return fmt.Sprintf(connURLFormat, scheme, host, port, appKey, protocolVersion)
+}
+
+// Connect establishes a connection to the Pusher app specified by appKey.
+func (c *Client) Connect(appKey string) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	var err error
+	c.ws, err = websocket.Dial(c.generateConnURL(appKey), "", localOrigin)
+	if err != nil {
+		return err
+	}
+
+	var event Event
+	err = websocket.JSON.Receive(c.ws, &event)
+	if err != nil {
+		return err
+	}
+
+	switch event.Event {
+	case pusherError:
+		return extractEventError(event)
+	case pusherConnEstablished:
+		var connData connectionData
+		err = UnmarshalDataString(event.Data, &connData)
+		if err != nil {
+			return err
+		}
+		c.connected = true
+		c.socketID = connData.SocketID
+		c.activityTimeout = time.Duration(connData.ActivityTimeout) * time.Second
+		c.activityTimer = time.NewTimer(c.activityTimeout)
+		c.boundEvents = map[string]boundEventChans{}
+		c.subscribedChannels = subscribedChannels{}
+
+		go c.heartbeat()
+		go c.listen()
+
+		return nil
+	default:
+		return fmt.Errorf("Got unknown event type from Pusher: %s", event.Event)
 	}
 }
 
-// listen to Pusher server and process/dispatch recieved events
+func (c *Client) isConnected() bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	return c.connected
+}
+
+func (c *Client) resetActivityTimer() {
+	go func() { c.activityTimerReset <- struct{}{} }()
+}
+
+func (c *Client) heartbeat() {
+	for c.isConnected() {
+		select {
+		case <-c.activityTimerReset:
+			if !c.activityTimer.Stop() {
+				<-c.activityTimer.C
+			}
+			c.activityTimer.Reset(c.activityTimeout)
+		case <-c.activityTimer.C:
+			websocket.Message.Send(c.ws, pingPayload)
+			// TODO: implement timeout/reconnect logic
+		}
+	}
+}
+
+func (c *Client) sendError(err error) {
+	select {
+	case c.Errors <- err:
+	default:
+	}
+}
+
 func (c *Client) listen() {
-	for !c.Stopped() {
+	for c.isConnected() {
 		var event Event
 		err := websocket.JSON.Receive(c.ws, &event)
 		if err != nil {
-			if c.Stopped() {
-				// Normal termination (ws Receive returns error when ws is
-				// closed by other goroutine)
+			// If the websocket connection was closed, Receive will return an error.
+			// This is expected for an explicit disconnect.
+			if !c.isConnected() {
 				return
 			}
-			log.Println("Listen error : ", err)
-		} else {
-			//log.Println(event)
-			switch event.Event {
-			case "pusher:ping":
-				websocket.Message.Send(c.ws, `{"event":"pusher:pong","data":"{}"}`)
-			case "pusher:pong":
-			case "pusher:error":
-				log.Println("Event error received: ", event.Data)
-			default:
-				_, ok := c.binders[event.Event]
-				if ok {
-					c.binders[event.Event] <- &event
-				}
+			c.sendError(err)
+			continue
+		}
+
+		c.resetActivityTimer()
+
+		switch event.Event {
+		case pusherPing:
+			websocket.Message.Send(c.ws, pongPayload)
+		case pusherPong:
+			// TODO: stop pong timeout timer
+		case pusherError:
+			c.sendError(extractEventError(event))
+		default:
+			c.mutex.RLock()
+			for boundChan := range c.boundEvents[event.Event] {
+				go func(boundChan chan Event, event Event) {
+					boundChan <- event
+				}(boundChan, event)
 			}
+			if subChan, ok := c.subscribedChannels[event.Channel]; ok {
+				subChan.handleEvent(event.Event, event.Data)
+			}
+			c.mutex.RUnlock()
 		}
 	}
 }
 
-// Subsribe to a channel
-func (c *Client) Subscribe(channel string) (err error) {
-	// Already subscribed ?
-	if c.subscribedChannels.contains(channel) {
-		err = errors.New(fmt.Sprintf("Channel %s already subscribed", channel))
-		return
-	}
-	err = websocket.Message.Send(c.ws, fmt.Sprintf(`{"event":"pusher:subscribe","data":{"channel":"%s"}}`, channel))
-	if err != nil {
-		return
-	}
-	err = c.subscribedChannels.add(channel)
-	return
-}
+// Subscribe creates a subscription to the specified channel. Authentication will
+// be attempted for private and presence channels.Note that a nil error does not
+// mean that the subscription was succesful, just that the request was sent. If
+// the channel has already been subscribed, this method will return the existing
+// Channel instance.
+func (c *Client) Subscribe(channelName string) (Channel, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-// Unsubscribe from a channel
-func (c *Client) Unsubscribe(channel string) (err error) {
-	// subscribed ?
-	if !c.subscribedChannels.contains(channel) {
-		err = errors.New(fmt.Sprintf("Client isn't subscrived to %s", channel))
-		return
-	}
-	err = websocket.Message.Send(c.ws, fmt.Sprintf(`{"event":"pusher:unsubscribe","data":{"channel":"%s"}}`, channel))
-	if err != nil {
-		return
-	}
-	// Remove channel from subscribedChannels slice
-	c.subscribedChannels.remove(channel)
-	return
-}
+	ch, ok := c.subscribedChannels[channelName]
 
-// Bind an event
-func (c *Client) Bind(evt string) (dataChannel chan *Event, err error) {
-	// Already binded
-	_, ok := c.binders[evt]
-	if ok {
-		err = errors.New(fmt.Sprintf("Event %s already binded", evt))
-		return
-	}
-	// New data channel
-	dataChannel = make(chan *Event, EVENT_CHANNEL_BUFF_SIZE)
-	c.binders[evt] = dataChannel
-	return
-}
-
-// Unbind a event
-func (c *Client) Unbind(evt string) {
-	delete(c.binders, evt)
-}
-
-func NewCustomClient(appKey, host, scheme string) (*Client, error) {
-	origin := "http://localhost/"
-	url := scheme + "://" + host + "/app/" + appKey + "?protocol=" + PROTOCOL_VERSION
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		return nil, err
-	}
-	var resp = make([]byte, 11000) // Pusher max message size is 10KB
-	n, err := ws.Read(resp)
-	if err != nil {
-		return nil, err
-	}
-	var eventStub EventStub
-	err = json.Unmarshal(resp[0:n], &eventStub)
-	if err != nil {
-		return nil, err
-	}
-	switch eventStub.Event {
-	case "pusher:error":
-		var ewe EventError
-		err = json.Unmarshal(resp[0:n], &ewe)
-		if err != nil {
-			return nil, err
+	if !ok {
+		baseChan := &channel{
+			name:        channelName,
+			boundEvents: map[string]boundDataChans{},
+			client:      c,
 		}
-		return nil, ewe
-	case "pusher:connection_established":
-		sChannels := new(subscribedChannels)
-		sChannels.channels = make([]string, 0)
-		pClient := Client{ws, make(chan *Event, EVENT_CHANNEL_BUFF_SIZE), make(chan bool), sChannels, make(map[string]chan *Event)}
-		go pClient.heartbeat()
-		go pClient.listen()
-		return &pClient, nil
+		switch {
+		case strings.HasPrefix(channelName, "private-"):
+			ch = &privateChannel{baseChan}
+		case strings.HasPrefix(channelName, "presence-"):
+			ch = &privateChannel{baseChan}
+			// TODO: implement presence channels
+			// ch = presenceChannel{baseChan}
+		default:
+			ch = baseChan
+		}
+		c.subscribedChannels[channelName] = ch
 	}
-	return nil, errors.New("Ooooops something wrong happen")
+
+	return ch, ch.Subscribe()
 }
 
-// NewClient initialize & return a Pusher client
-func NewClient(appKey string) (*Client, error) {
-	return NewCustomClient(appKey, "ws.pusherapp.com:443", "wss")
+// Unsubscribe unsubscribes from the specified channel. Events will no longer
+// be received from that channe. Note that a nil error does not mean that the
+// unsubscription was succesful, just that the request was sent.
+func (c *Client) Unsubscribe(channelName string) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	ch, ok := c.subscribedChannels[channelName]
+	if !ok {
+		return nil
+	}
+
+	delete(c.subscribedChannels, channelName)
+	return ch.Unsubscribe()
 }
 
-// Stopped checks, in a non-blocking way, if client has been closed.
-func (c *Client) Stopped() bool {
-	select {
-	case <-c.Stop:
-		return true
-	default:
-		return false
+// Bind returns a channel to which all matching events received on the connection
+// will be sent.
+func (c *Client) Bind(event string) chan Event {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	boundChan := make(chan Event)
+
+	if c.boundEvents[event] == nil {
+		c.boundEvents[event] = boundEventChans{}
+	}
+	c.boundEvents[event][boundChan] = struct{}{}
+
+	return boundChan
+}
+
+// Unbind removes bindings for an event. If chans are passed, only those bindings
+// will be removed. Otherwise, all bindings for an event will be removed.
+func (c *Client) Unbind(event string, chans ...chan Event) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if len(chans) == 0 {
+		delete(c.boundEvents, event)
+		return
+	}
+
+	eventBoundChans := c.boundEvents[event]
+	for _, boundChan := range chans {
+		delete(eventBoundChans, boundChan)
 	}
 }
 
-// Close the underlying Pusher connection (websocket)
-func (c *Client) Close() error {
-	// Closing the Stop channel "broadcasts" the stop signal.
-	close(c.Stop)
+// SendEvent sends an event on the Pusher connection.
+func (c *Client) SendEvent(event string, data interface{}, channelName string) error {
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	e := Event{
+		Event:   event,
+		Data:    dataJSON,
+		Channel: channelName,
+	}
+
+	c.resetActivityTimer()
+
+	return websocket.JSON.Send(c.ws, e)
+}
+
+// Disconnect closes the websocket connection to Pusher. Any subsequent operations
+// are invalid until Connect is called again.
+func (c *Client) Disconnect() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.connected = false
+
 	return c.ws.Close()
 }
