@@ -14,8 +14,8 @@ This package implements a Pusher websocket client. It is based on the official [
 	* [x] Insecure connection
 * [x] Subscribe to channel
 	* [x] Auth for private and presence channels
-	* [ ] Custom auth parameters
-	* [ ] Custom auth headers
+	* [x] Custom auth parameters
+	* [x] Custom auth headers
 * [x] Unsubscribe from channel
 * [x] Bind to events
 	* [x] Bind at app level
@@ -25,3 +25,4 @@ This package implements a Pusher websocket client. It is based on the official [
 * [x] Unbind events
 * [ ] Presence channel member data
 * [ ] Cancel subscribing
+* [ ] Handle pong timeout/reconnect
