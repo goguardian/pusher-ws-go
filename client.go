@@ -3,6 +3,8 @@ package pusher
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -44,13 +46,18 @@ type subscribedChannels map[string]Channel
 // any other methods before a connection is established is an invalid operation
 // and may panic.
 type Client struct {
-	// The URL to call when authenticating private or presence channels.
-	AuthURL string
-	// Whether to connect to Pusher over an insecure websocket connection.
-	Insecure bool
 	// The cluster to connect to. The default is Pusher's "mt1" cluster in the
 	// "us-east-1" region.
 	Cluster string
+	// Whether to connect to Pusher over an insecure websocket connection.
+	Insecure bool
+
+	// The URL to call when authenticating private or presence channels.
+	AuthURL string
+	// Additional parameters to be sent in the POST body of an authentication request.
+	AuthParams url.Values
+	// Additional HTTP headers to be sent in an authentication request.
+	AuthHeaders http.Header
 
 	// If provided, errors that occur while receiving messages and errors emitted
 	// by Pusher will be sent to this channel.
