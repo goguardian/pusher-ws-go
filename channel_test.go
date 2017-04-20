@@ -360,3 +360,13 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 		wg.Wait()
 	})
 }
+
+func TestChannelIsSubscribed(t *testing.T) {
+	ch := &channel{
+		subscribed: true,
+	}
+
+	if ch.IsSubscribed() != true {
+		t.Errorf("Expected channel subscribe to be true, got false")
+	}
+}

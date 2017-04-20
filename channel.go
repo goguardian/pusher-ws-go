@@ -11,6 +11,8 @@ import (
 
 // Channel represents a subscription to a Pusher channel.
 type Channel interface {
+	// IsSubscribed indicates if the channel is currently subscribed
+	IsSubscribed() bool
 	// Subscribe attempts to subscribe to the channel if the subscription is not
 	// already active. Authentication will be attempted for private and presence
 	// channels. Note that a nil error does not mean that the subscription was
@@ -49,6 +51,13 @@ type subscribeData struct {
 	Channel     string `json:"channel"`
 	Auth        string `json:"auth,omitempty"`
 	ChannelData string `json:"channel_data,omitempty"`
+}
+
+func (c *channel) IsSubscribed() bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	return c.subscribed
 }
 
 func (c *channel) Subscribe() error {
