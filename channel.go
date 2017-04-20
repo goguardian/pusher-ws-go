@@ -54,6 +54,9 @@ type subscribeData struct {
 }
 
 func (c *channel) IsSubscribed() bool {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
 	return c.subscribed
 }
 
