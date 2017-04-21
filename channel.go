@@ -81,7 +81,7 @@ func WithSuccessTimeout(d time.Duration) SubscribeOption {
 	}
 }
 
-// ErrTimedOut is the error returned when there is a timeour waiting for a subscription
+// ErrTimedOut is the error returned when there is a timeout waiting for a subscription
 // confirmation from Pusher
 var ErrTimedOut = errors.New("timed out")
 
@@ -100,6 +100,9 @@ func (c *channel) sendSubscriptionRequest(data subscribeData, o *subscribeOption
 		case <-time.After(o.successTimeout):
 			err = ErrTimedOut
 		}
+
+		// try to send on the channel, but don't block if nothing is listening, such
+		// as when there is an error calling SendEvent
 		select {
 		case doneChan <- err:
 		default:
@@ -171,6 +174,7 @@ func (c *channel) Unbind(event string, chans ...chan json.RawMessage) {
 
 func (c *channel) handleEvent(event string, data json.RawMessage) {
 	if event == pusherInternalSubSucceeded {
+		// try to send on the channel, but don't block if nothing is listening
 		select {
 		case c.subscribeSuccess <- struct{}{}:
 		default:
@@ -259,6 +263,7 @@ func (c *privateChannel) Subscribe(opts ...SubscribeOption) error {
 		} else {
 			bodyStr = string(body)
 		}
+
 		return AuthError{
 			Status: res.StatusCode,
 			Body:   bodyStr,
