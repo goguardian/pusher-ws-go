@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -199,6 +200,16 @@ type privateChannel struct {
 	*channel
 }
 
+// An AuthError is returned when a non-200 status code is returned in a channel
+// subscription authentication request.
+type AuthError struct {
+	Status int
+	Body   string
+}
+
+func (e AuthError) Error() string {
+	return fmt.Sprintf("Auth error: status code %d, response body: %q", e.Status, e.Body)
+}
 
 func (c *privateChannel) Subscribe(opts ...SubscribeOption) error {
 	if c.IsSubscribed() {
@@ -240,8 +251,18 @@ func (c *privateChannel) Subscribe(opts ...SubscribeOption) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		// TODO: add the response body to the error message
-		return fmt.Errorf("Got non-200 status code from auth endpoint: %d", res.StatusCode)
+		var body []byte
+		var bodyStr string
+		body, err = ioutil.ReadAll(res.Body)
+		if err != nil {
+			bodyStr = fmt.Sprintf("Error reading response body: %s", err)
+		} else {
+			bodyStr = string(body)
+		}
+		return AuthError{
+			Status: res.StatusCode,
+			Body:   bodyStr,
+		}
 	}
 
 	chanData := subscribeData{}

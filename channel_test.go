@@ -295,6 +295,20 @@ func TestChannelTrigger(t *testing.T) {
 	wg.Wait()
 }
 
+func TestAuthErrorError(t *testing.T) {
+	err := AuthError{
+		Status: 123,
+		Body:   "foo",
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "status code 123") {
+		t.Errorf("Expected error message to contain 'status code 123', got %s", errMsg)
+	}
+	if !strings.Contains(errMsg, `body: "foo"`) {
+		t.Errorf(`Expected error message to contain 'body: "foo"', got %s`, errMsg)
+	}
+}
+
 func TestPrivateChannelSubscribe(t *testing.T) {
 	t.Run("subscribed", func(t *testing.T) {
 		ch := &privateChannel{
@@ -414,6 +428,30 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 		}
 
 		wg.Wait()
+	})
+
+	t.Run("authFail", func(t *testing.T) {
+		wantStatus := http.StatusForbidden
+
+		authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(wantStatus)
+		}))
+		defer authSrv.Close()
+
+		ch := &privateChannel{
+			&channel{
+				subscribed: false,
+				client: &Client{
+					AuthURL: authSrv.URL,
+				},
+			},
+		}
+
+		err := ch.Subscribe()
+		authErr := err.(AuthError)
+		if authErr.Status != wantStatus {
+			t.Errorf("Expected auth error status to be %d, got %d", wantStatus, authErr.Status)
+		}
 	})
 }
 
