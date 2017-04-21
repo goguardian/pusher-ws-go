@@ -236,15 +236,13 @@ func (c *Client) listen() {
 }
 
 // Subscribe creates a subscription to the specified channel. Authentication will
-// be attempted for private and presence channels.Note that a nil error does not
-// mean that the subscription was successful, just that the request was sent. If
-// the channel has already been subscribed, this method will return the existing
-// Channel instance.
-func (c *Client) Subscribe(channelName string) (Channel, error) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+// be attempted for private and presence channels. If the channel has already been
+// subscribed, this method will return the existing Channel instance.
+func (c *Client) Subscribe(channelName string, opts ...SubscribeOption) (Channel, error) {
 
+	c.mutex.RLock()
 	ch, ok := c.subscribedChannels[channelName]
+	c.mutex.RUnlock()
 
 	if !ok {
 		baseChan := &channel{
@@ -262,10 +260,12 @@ func (c *Client) Subscribe(channelName string) (Channel, error) {
 		default:
 			ch = baseChan
 		}
+		c.mutex.Lock()
 		c.subscribedChannels[channelName] = ch
+		c.mutex.Unlock()
 	}
 
-	return ch, ch.Subscribe()
+	return ch, ch.Subscribe(opts...)
 }
 
 // Unsubscribe unsubscribes from the specified channel. Events will no longer

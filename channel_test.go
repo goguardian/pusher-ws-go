@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/net/websocket"
 )
@@ -25,9 +26,9 @@ func TestChannelSubscribe(t *testing.T) {
 		}
 	})
 
-	t.Run("notSubscribed", func(t *testing.T) {
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
+	t.Run("subscribeSuccess", func(t *testing.T) {
+		wantChannel := "foo"
+
 		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
 			var event Event
 			err := websocket.JSON.Receive(ws, &event)
@@ -38,11 +39,17 @@ func TestChannelSubscribe(t *testing.T) {
 			if event.Event != pusherSubscribe {
 				t.Errorf("Expected to get subscribe event, got %+v", event)
 			}
-			if !reflect.DeepEqual(event.Data, json.RawMessage(`{"channel":"foo"}`)) {
-				t.Errorf("Expected subscribe data to have channel 'foo', got %s", event.Data)
+			if !reflect.DeepEqual(event.Data, json.RawMessage(`{"channel":"`+wantChannel+`"}`)) {
+				t.Errorf("Expected subscribe data to have channel %q, got %q", wantChannel, event.Data)
 			}
 
-			wg.Done()
+			err = websocket.JSON.Send(ws, Event{
+				Event:   pusherInternalSubSucceeded,
+				Channel: wantChannel,
+			})
+			if err != nil {
+				panic(err)
+			}
 		}))
 		defer srv.Close()
 		wsURL := strings.Replace(srv.URL, "http", "ws", 1)
@@ -52,20 +59,56 @@ func TestChannelSubscribe(t *testing.T) {
 		}
 
 		ch := &channel{
-			name:       "foo",
+			name:       wantChannel,
 			subscribed: false,
 			client: &Client{
-				ws: ws,
+				ws:        ws,
+				connected: true,
 			},
 		}
+		ch.client.subscribedChannels = subscribedChannels{wantChannel: ch}
 		defer ch.client.Disconnect()
 
-		err = ch.Subscribe()
+		go ch.client.listen()
+
+		successTimeout := 10 * time.Millisecond
+		err = ch.Subscribe(WithSuccessTimeout(successTimeout))
+		if err != nil {
+			panic(err)
+		}
+	})
+
+	t.Run("subscribeTimeout", func(t *testing.T) {
+		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {}))
+		defer srv.Close()
+		wsURL := strings.Replace(srv.URL, "http", "ws", 1)
+		ws, err := websocket.Dial(wsURL, "ws", localOrigin)
 		if err != nil {
 			panic(err)
 		}
 
-		wg.Wait()
+		ch := &channel{
+			client: &Client{
+				ws:        ws,
+				connected: true,
+			},
+		}
+		defer ch.client.Disconnect()
+
+		successTimeout := 10 * time.Millisecond
+		waitTimeout := 2 * successTimeout
+		timer := time.NewTimer(waitTimeout)
+
+		go func() {
+			<-timer.C
+			t.Errorf("Expected to timeout in %s, waited %s with no timeout", successTimeout, waitTimeout)
+		}()
+
+		err = ch.Subscribe(WithSuccessTimeout(successTimeout))
+		timer.Stop()
+		if err != ErrTimedOut {
+			t.Errorf("Expected to get error %s, got %v", ErrTimedOut, err)
+		}
 	})
 }
 
@@ -252,6 +295,20 @@ func TestChannelTrigger(t *testing.T) {
 	wg.Wait()
 }
 
+func TestAuthErrorError(t *testing.T) {
+	err := AuthError{
+		Status: 123,
+		Body:   "foo",
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "status code 123") {
+		t.Errorf("Expected error message to contain 'status code 123', got %s", errMsg)
+	}
+	if !strings.Contains(errMsg, `body: "foo"`) {
+		t.Errorf(`Expected error message to contain 'body: "foo"', got %s`, errMsg)
+	}
+}
+
 func TestPrivateChannelSubscribe(t *testing.T) {
 	t.Run("subscribed", func(t *testing.T) {
 		ch := &privateChannel{
@@ -266,7 +323,7 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 		}
 	})
 
-	t.Run("notSubscribed", func(t *testing.T) {
+	t.Run("subscribeSuccess", func(t *testing.T) {
 		wantChannel := "foo"
 		wantSocketID := "bar"
 		wantAuth := "baz"
@@ -297,6 +354,14 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 			}
 			if data.Auth != wantAuth {
 				t.Errorf("Expected subscribe data to have auth %q, got %q", wantAuth, data.Auth)
+			}
+
+			err = websocket.JSON.Send(ws, Event{
+				Event:   pusherInternalSubSucceeded,
+				Channel: wantChannel,
+			})
+			if err != nil {
+				panic(err)
 			}
 
 			wg.Done()
@@ -343,6 +408,7 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 				subscribed: false,
 				client: &Client{
 					ws:          ws,
+					connected:   true,
 					socketID:    wantSocketID,
 					AuthURL:     authSrv.URL,
 					AuthParams:  wantParams,
@@ -350,14 +416,42 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 				},
 			},
 		}
+		ch.client.subscribedChannels = subscribedChannels{wantChannel: ch}
 		defer ch.client.Disconnect()
 
-		err = ch.Subscribe()
+		go ch.client.listen()
+
+		successTimeout := 100 * time.Millisecond
+		err = ch.Subscribe(WithSuccessTimeout(successTimeout))
 		if err != nil {
 			panic(err)
 		}
 
 		wg.Wait()
+	})
+
+	t.Run("authFail", func(t *testing.T) {
+		wantStatus := http.StatusForbidden
+
+		authSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(wantStatus)
+		}))
+		defer authSrv.Close()
+
+		ch := &privateChannel{
+			&channel{
+				subscribed: false,
+				client: &Client{
+					AuthURL: authSrv.URL,
+				},
+			},
+		}
+
+		err := ch.Subscribe()
+		authErr := err.(AuthError)
+		if authErr.Status != wantStatus {
+			t.Errorf("Expected auth error status to be %d, got %d", wantStatus, authErr.Status)
+		}
 	})
 }
 

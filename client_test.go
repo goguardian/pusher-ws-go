@@ -196,14 +196,15 @@ func TestClientSubscribe(t *testing.T) {
 			panic(err)
 		}
 
-		ch := &channel{name: "foo"}
+		channelName := "foo"
+		ch := &channel{name: channelName, subscribed: true}
 		client := &Client{
-			subscribedChannels: map[string]Channel{"foo": ch},
+			subscribedChannels: map[string]Channel{channelName: ch},
 			ws:                 ws,
 		}
 		defer client.Disconnect()
 		ch.client = client
-		subCh, err := client.Subscribe("foo")
+		subCh, err := client.Subscribe(channelName)
 		if err != nil {
 			panic(err)
 		}
@@ -214,7 +215,26 @@ func TestClientSubscribe(t *testing.T) {
 	})
 
 	t.Run("newPublicChannel", func(t *testing.T) {
-		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {}))
+		channelName := "foo"
+
+		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
+			var evt Event
+			err := websocket.JSON.Receive(ws, &evt)
+			if err != nil {
+				panic(err)
+			}
+			if evt.Event != pusherSubscribe {
+				t.Errorf("Expected event to be %q, got %q", pusherSubscribe, evt.Event)
+			}
+
+			err = websocket.JSON.Send(ws, Event{
+				Event:   pusherInternalSubSucceeded,
+				Channel: channelName,
+			})
+			if err != nil {
+				panic(err)
+			}
+		}))
 		defer srv.Close()
 		wsURL := strings.Replace(srv.URL, "http", "ws", 1)
 		ws, err := websocket.Dial(wsURL, "ws", localOrigin)
@@ -225,21 +245,44 @@ func TestClientSubscribe(t *testing.T) {
 		client := &Client{
 			subscribedChannels: map[string]Channel{},
 			ws:                 ws,
+			connected:          true,
 		}
 		defer client.Disconnect()
-		subCh, err := client.Subscribe("foo")
+
+		go client.listen()
+
+		subCh, err := client.Subscribe(channelName)
 		if err != nil {
 			panic(err)
 		}
 
 		baseCh := subCh.(*channel)
-		if baseCh.name != "foo" {
-			t.Errorf("Expected channel name to be 'foo', got %s", baseCh.name)
+		if baseCh.name != channelName {
+			t.Errorf("Expected channel name to be %q, got %q", channelName, baseCh.name)
 		}
 	})
 
 	t.Run("newPrivateChannel", func(t *testing.T) {
-		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {}))
+		channelName := "private-foo"
+
+		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
+			var evt Event
+			err := websocket.JSON.Receive(ws, &evt)
+			if err != nil {
+				panic(err)
+			}
+			if evt.Event != pusherSubscribe {
+				t.Errorf("Expected event to be %q, got %q", pusherSubscribe, evt.Event)
+			}
+
+			err = websocket.JSON.Send(ws, Event{
+				Event:   pusherInternalSubSucceeded,
+				Channel: channelName,
+			})
+			if err != nil {
+				panic(err)
+			}
+		}))
 		defer srv.Close()
 		wsURL := strings.Replace(srv.URL, "http", "ws", 1)
 		ws, err := websocket.Dial(wsURL, "ws", localOrigin)
@@ -254,22 +297,45 @@ func TestClientSubscribe(t *testing.T) {
 		client := &Client{
 			subscribedChannels: map[string]Channel{},
 			ws:                 ws,
+			connected:          true,
 			AuthURL:            authSrv.URL,
 		}
 		defer client.Disconnect()
-		subCh, err := client.Subscribe("private-foo")
+
+		go client.listen()
+
+		subCh, err := client.Subscribe(channelName)
 		if err != nil {
 			panic(err)
 		}
 
 		baseCh := subCh.(*privateChannel)
-		if baseCh.name != "private-foo" {
-			t.Errorf("Expected channel name to be 'private-foo', got %s", baseCh.name)
+		if baseCh.name != channelName {
+			t.Errorf("Expected channel name to be %q, got %q", channelName, baseCh.name)
 		}
 	})
 
 	t.Run("newPresenceChannel", func(t *testing.T) {
-		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {}))
+		channelName := "presence-foo"
+
+		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
+			var evt Event
+			err := websocket.JSON.Receive(ws, &evt)
+			if err != nil {
+				panic(err)
+			}
+			if evt.Event != pusherSubscribe {
+				t.Errorf("Expected event to be %q, got %q", pusherSubscribe, evt.Event)
+			}
+
+			err = websocket.JSON.Send(ws, Event{
+				Event:   pusherInternalSubSucceeded,
+				Channel: channelName,
+			})
+			if err != nil {
+				panic(err)
+			}
+		}))
 		defer srv.Close()
 		wsURL := strings.Replace(srv.URL, "http", "ws", 1)
 		ws, err := websocket.Dial(wsURL, "ws", localOrigin)
@@ -284,17 +350,21 @@ func TestClientSubscribe(t *testing.T) {
 		client := &Client{
 			subscribedChannels: map[string]Channel{},
 			ws:                 ws,
+			connected:          true,
 			AuthURL:            authSrv.URL,
 		}
 		defer client.Disconnect()
-		subCh, err := client.Subscribe("presence-foo")
+
+		go client.listen()
+
+		subCh, err := client.Subscribe(channelName)
 		if err != nil {
 			panic(err)
 		}
 
 		baseCh := subCh.(*privateChannel)
-		if baseCh.name != "presence-foo" {
-			t.Errorf("Expected channel name to be 'presence-foo', got %s", baseCh.name)
+		if baseCh.name != channelName {
+			t.Errorf("Expected channel name to be %q, got %q", channelName, baseCh.name)
 		}
 	})
 }
