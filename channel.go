@@ -34,6 +34,13 @@ type Channel interface {
 	Trigger(event string, data interface{}) error
 }
 
+// internalChannel represents the Channel interface used internally
+type internalChannel interface {
+	Channel
+
+	handleEvent(event string, data json.RawMessage)
+}
+
 type boundDataChans map[chan json.RawMessage]struct{}
 
 type channel struct {

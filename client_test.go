@@ -199,7 +199,7 @@ func TestClientSubscribe(t *testing.T) {
 		channelName := "foo"
 		ch := &channel{name: channelName, subscribed: true}
 		client := &Client{
-			subscribedChannels: map[string]Channel{channelName: ch},
+			subscribedChannels: map[string]internalChannel{channelName: ch},
 			ws:                 ws,
 		}
 		defer client.Disconnect()
@@ -243,7 +243,7 @@ func TestClientSubscribe(t *testing.T) {
 		}
 
 		client := &Client{
-			subscribedChannels: map[string]Channel{},
+			subscribedChannels: map[string]internalChannel{},
 			ws:                 ws,
 			connected:          true,
 		}
@@ -295,7 +295,7 @@ func TestClientSubscribe(t *testing.T) {
 		}))
 
 		client := &Client{
-			subscribedChannels: map[string]Channel{},
+			subscribedChannels: map[string]internalChannel{},
 			ws:                 ws,
 			connected:          true,
 			AuthURL:            authSrv.URL,
@@ -348,7 +348,7 @@ func TestClientSubscribe(t *testing.T) {
 		}))
 
 		client := &Client{
-			subscribedChannels: map[string]Channel{},
+			subscribedChannels: map[string]internalChannel{},
 			ws:                 ws,
 			connected:          true,
 			AuthURL:            authSrv.URL,
@@ -380,7 +380,7 @@ func TestClientUnsubscribe(t *testing.T) {
 
 	ch := &channel{name: "foo"}
 	client := &Client{
-		subscribedChannels: map[string]Channel{"foo": ch},
+		subscribedChannels: map[string]internalChannel{"foo": ch},
 		ws:                 ws,
 	}
 	defer client.Disconnect()
@@ -574,7 +574,7 @@ func TestClientListen(t *testing.T) {
 			boundEvents: map[string]boundEventChans{
 				wantEvent.Event: {eventChan: struct{}{}},
 			},
-			subscribedChannels: map[string]Channel{
+			subscribedChannels: map[string]internalChannel{
 				wantEvent.Channel: &channel{
 					boundEvents: map[string]boundDataChans{
 						wantEvent.Event: {dataChan: struct{}{}},
