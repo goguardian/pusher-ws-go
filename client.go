@@ -39,7 +39,7 @@ const (
 
 type boundEventChans map[chan Event]struct{}
 
-type subscribedChannels map[string]Channel
+type subscribedChannels map[string]internalChannel
 
 // Client represents a Pusher websocket client. After creating an instance, it
 // is necessary to call Connect to establish the connection with Pusher. Calling

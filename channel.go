@@ -32,6 +32,11 @@ type Channel interface {
 	Unbind(event string, chans ...chan json.RawMessage)
 	// Trigger sends an event to the channel.
 	Trigger(event string, data interface{}) error
+}
+
+// internalChannel represents the Channel interface used internally
+type internalChannel interface {
+	Channel
 
 	handleEvent(event string, data json.RawMessage)
 }
