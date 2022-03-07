@@ -32,8 +32,6 @@ type Channel interface {
 	Unbind(event string, chans ...chan json.RawMessage)
 	// Trigger sends an event to the channel.
 	Trigger(event string, data interface{}) error
-
-	handleEvent(event string, data json.RawMessage)
 }
 
 type boundDataChans map[chan json.RawMessage]struct{}
