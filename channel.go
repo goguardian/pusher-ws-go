@@ -1,6 +1,7 @@
 package pusher
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,17 @@ type internalChannel interface {
 	handleEvent(event string, data json.RawMessage)
 }
 
-type boundDataChans map[chan json.RawMessage]struct{}
+type chanContext struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func newChanContext() chanContext {
+	ctx, cancel := context.WithCancel(context.Background())
+	return chanContext{ctx, cancel}
+}
+
+type boundDataChans map[chan json.RawMessage]chanContext
 
 type channel struct {
 	name        string
@@ -51,14 +62,18 @@ type channel struct {
 	client           *Client
 	subscribed       bool
 	subscribeSuccess chan struct{}
+	// channelData is populated for authorized channels (presence and private
+	// channels). It's set by sendSubscriptionRequest. The channelData is invalid
+	// until subscribed is set to true.
+	channelData channelData
 
 	mutex sync.RWMutex
 }
 
-type subscribeData struct {
-	Channel     string `json:"channel"`
-	Auth        string `json:"auth,omitempty"`
-	ChannelData string `json:"channel_data,omitempty"`
+type channelData struct {
+	Channel     string          `json:"channel"`
+	Auth        string          `json:"auth,omitempty"`
+	ChannelData json.RawMessage `json:"channel_data,omitempty"`
 }
 
 func (c *channel) IsSubscribed() bool {
@@ -90,9 +105,10 @@ func WithSuccessTimeout(d time.Duration) SubscribeOption {
 // confirmation from Pusher
 var ErrTimedOut = errors.New("timed out")
 
-func (c *channel) sendSubscriptionRequest(data subscribeData, o *subscribeOptions) error {
+func (c *channel) sendSubscriptionRequest(data channelData, o *subscribeOptions) error {
 	c.mutex.Lock()
 	c.subscribeSuccess = make(chan struct{})
+	c.channelData = data
 	c.mutex.Unlock()
 
 	doneChan := make(chan error)
@@ -135,7 +151,7 @@ func (c *channel) Subscribe(opts ...SubscribeOption) error {
 		opt(o)
 	}
 
-	return c.sendSubscriptionRequest(subscribeData{Channel: c.name}, o)
+	return c.sendSubscriptionRequest(channelData{Channel: c.name}, o)
 }
 
 func (c *channel) Unsubscribe() error {
@@ -143,7 +159,7 @@ func (c *channel) Unsubscribe() error {
 	defer c.mutex.Unlock()
 
 	c.subscribed = false
-	return c.client.SendEvent(pusherUnsubscribe, subscribeData{
+	return c.client.SendEvent(pusherUnsubscribe, channelData{
 		Channel: c.name,
 	}, "")
 }
@@ -157,7 +173,8 @@ func (c *channel) Bind(event string) chan json.RawMessage {
 	if c.boundEvents[event] == nil {
 		c.boundEvents[event] = boundDataChans{}
 	}
-	c.boundEvents[event][boundChan] = struct{}{}
+
+	c.boundEvents[event][boundChan] = newChanContext()
 
 	return boundChan
 }
@@ -167,12 +184,21 @@ func (c *channel) Unbind(event string, chans ...chan json.RawMessage) {
 	defer c.mutex.Unlock()
 
 	if len(chans) == 0 {
+		for _, chanCtx := range c.boundEvents[event] {
+			chanCtx.cancel()
+		}
 		delete(c.boundEvents, event)
 		return
 	}
 
 	eventBoundChans := c.boundEvents[event]
 	for _, boundChan := range chans {
+		chanCtx, exists := eventBoundChans[boundChan]
+		if !exists {
+			continue
+		}
+
+		chanCtx.cancel()
 		delete(eventBoundChans, boundChan)
 	}
 }
@@ -193,12 +219,19 @@ func (c *channel) handleEvent(event string, data json.RawMessage) {
 	}
 
 	c.mutex.RLock()
-	for boundChan := range c.boundEvents[event] {
-		go func(boundChan chan json.RawMessage, data json.RawMessage) {
-			boundChan <- data
-		}(boundChan, data)
-	}
+	sendDataMessage(c.boundEvents[event], data)
 	c.mutex.RUnlock()
+}
+
+func sendDataMessage(channels boundDataChans, data json.RawMessage) {
+	for boundChan, chanCtx := range channels {
+		go func(boundChan chan json.RawMessage, data json.RawMessage, chanCtx chanContext) {
+			select {
+			case boundChan <- data:
+			case <-chanCtx.ctx.Done():
+			}
+		}(boundChan, data, chanCtx)
+	}
 }
 
 func (c *channel) Trigger(event string, data interface{}) error {
@@ -275,7 +308,7 @@ func (c *privateChannel) Subscribe(opts ...SubscribeOption) error {
 		}
 	}
 
-	chanData := subscribeData{}
+	chanData := channelData{}
 	if err = json.NewDecoder(res.Body).Decode(&chanData); err != nil {
 		return err
 	}

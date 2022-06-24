@@ -26,6 +26,6 @@ This package implements a Pusher websocket client. It is based on the official [
 	* [ ] Bind global at app level
 	* [ ] Bind global at channel level
 * [x] Unbind events
-* [ ] Presence channel member data
+* [x] Presence channel member data
 * [ ] Cancel subscribing
 * [ ] Handle pong timeout/reconnect
