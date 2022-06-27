@@ -115,10 +115,14 @@ func (c *channel) sendSubscriptionRequest(data channelData, o *subscribeOptions)
 
 	go func() {
 		var err error
+
+		timer := time.NewTimer(o.successTimeout)
+		defer timer.Stop()
+
 		select {
 		case <-c.subscribeSuccess:
 			err = nil
-		case <-time.After(o.successTimeout):
+		case <-timer.C:
 			err = ErrTimedOut
 		}
 
