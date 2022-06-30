@@ -32,7 +32,8 @@ type PresenceChannel interface {
 	Channel
 
 	// BindMemberAdded returns a channel that receives a Member value when a user
-	// joins the channel. Events may be delivered out of order.
+	// joins the channel. Events may be delivered out of order. Use
+	// UnbindMemberAdded when finished listening to events.
 	BindMemberAdded() chan Member
 
 	// UnbindMemberAdded removes bindings created by BindMemberAdded(). If chans
@@ -41,7 +42,8 @@ type PresenceChannel interface {
 	UnbindMemberAdded(...chan Member)
 
 	// BindMemberRemoved returns a channel that receives a user ID when a user
-	// leaves the channel. Events may be delivered out of order.
+	// leaves the channel. Events may be delivered out of order. Use
+	// UnbindMemberRemoved when finished listening for events.
 	BindMemberRemoved() chan string
 
 	// UnbindMemberRemoved removes bindings created by UnbindMemberRemoved(). If
