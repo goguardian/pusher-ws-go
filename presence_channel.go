@@ -227,6 +227,7 @@ func (c *presenceChannel) UnbindMemberAdded(chans ...chan Member) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	// Remove all channels when no channels were specified
 	if len(chans) == 0 {
 		for _, chanCtx := range c.memberAddedChans {
 			chanCtx.cancel()
@@ -235,6 +236,7 @@ func (c *presenceChannel) UnbindMemberAdded(chans ...chan Member) {
 		return
 	}
 
+	// Remove given channels
 	for _, ch := range chans {
 		chanCtx, exists := c.memberAddedChans[ch]
 		if !exists {
@@ -260,6 +262,7 @@ func (c *presenceChannel) UnbindMemberRemoved(chans ...chan string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	// Remove all channels when no channels were specified
 	if len(chans) == 0 {
 		for _, chanCtx := range c.memberRemovedChans {
 			chanCtx.cancel()
@@ -268,6 +271,7 @@ func (c *presenceChannel) UnbindMemberRemoved(chans ...chan string) {
 		return
 	}
 
+	// Remove given channels
 	for _, ch := range chans {
 		chanCtx, exists := c.memberRemovedChans[ch]
 		if !exists {
