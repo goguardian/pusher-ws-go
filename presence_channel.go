@@ -2,17 +2,18 @@ package pusher
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
 var (
 	// ErrNotSubscribed is returned by functions that require the channel to be
 	// subscribed before being called.
-	ErrNotSubscribed = fmt.Errorf("not subscribed")
+	ErrNotSubscribed = errors.New("not subscribed")
 	// ErrMissingMe indicates a presence channel was subscribed to, but the pusher
 	// server violated the message protocol by not providing a member for the
 	// current user.
-	ErrMissingMe = fmt.Errorf("missing member for current user")
+	ErrMissingMe = errors.New("missing member for current user")
 )
 
 // Member represents a channel member.
