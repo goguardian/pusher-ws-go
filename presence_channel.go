@@ -77,11 +77,10 @@ type PresenceChannel interface {
 type presenceChannel struct {
 	*privateChannel
 
+	membersMutex       sync.RWMutex
 	memberAddedChans   map[chan Member]chanContext
 	memberRemovedChans map[chan string]chanContext
 	members            map[string]Member
-
-	membersMutex sync.RWMutex
 }
 
 func newPresenceChannel(baseChannel *channel) *presenceChannel {
