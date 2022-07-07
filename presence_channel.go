@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 var (
@@ -79,6 +80,8 @@ type presenceChannel struct {
 	memberAddedChans   map[chan Member]chanContext
 	memberRemovedChans map[chan string]chanContext
 	members            map[string]Member
+
+	membersMutex sync.RWMutex
 }
 
 func newPresenceChannel(baseChannel *channel) *presenceChannel {
@@ -86,7 +89,7 @@ func newPresenceChannel(baseChannel *channel) *presenceChannel {
 	return &presenceChannel{
 		privateChannel:     privateChannel,
 		memberAddedChans:   map[chan Member]chanContext{},
-		memberRemovedChans: make(map[chan string]chanContext),
+		memberRemovedChans: map[chan string]chanContext{},
 		members:            map[string]Member{},
 	}
 }
@@ -115,49 +118,44 @@ type presenceChannelMemberRemovedData struct {
 	UserID string `json:"user_id"`
 }
 
-func (c *presenceChannel) handleEvent(event string, data json.RawMessage) {
-	if event == pusherInternalMemberAdded {
+func (pc *presenceChannel) handleEvent(event string, data json.RawMessage) {
+	switch event {
+	case pusherInternalMemberAdded:
 		var member presenceChannelMemberAddedData
 		err := UnmarshalDataString(data, &member)
 		if err != nil {
-			c.client.sendError(fmt.Errorf("decoding member added event data: %w", err))
+			pc.privateChannel.channel.client.sendError(fmt.Errorf("decoding member added event data: %w", err))
 			return
 		}
 
-		c.mutex.Lock()
-		c.members[member.UserID] = Member{
+		pc.membersMutex.Lock()
+		pc.members[member.UserID] = Member{
 			ID:   member.UserID,
 			Info: member.UserInfo,
 		}
 
-		sendMemberAdded(c.memberAddedChans, c.members[member.UserID])
-		c.mutex.Unlock()
+		sendMemberAdded(pc.memberAddedChans, pc.members[member.UserID])
+		pc.membersMutex.Unlock()
 
-		return
-	}
-
-	if event == pusherInternalMemberRemoved {
+	case pusherInternalMemberRemoved:
 		var member presenceChannelMemberRemovedData
 		err := UnmarshalDataString(data, &member)
 		if err != nil {
-			c.client.sendError(fmt.Errorf("decoding member removed event data: %w", err))
+			pc.privateChannel.channel.client.sendError(fmt.Errorf("decoding member removed event data: %w", err))
 			return
 		}
 
-		c.mutex.Lock()
-		delete(c.members, member.UserID)
+		pc.membersMutex.Lock()
+		delete(pc.members, member.UserID)
 
-		sendMemberRemoved(c.memberRemovedChans, member.UserID)
-		c.mutex.Unlock()
+		sendMemberRemoved(pc.memberRemovedChans, member.UserID)
+		pc.membersMutex.Unlock()
 
-		return
-	}
-
-	if event == pusherInternalSubSucceeded {
+	case pusherInternalSubSucceeded:
 		var subscriptionData presenceChannelSubscriptionData
 		err := UnmarshalDataString(data, &subscriptionData)
 		if err != nil {
-			c.client.sendError(fmt.Errorf("decoding sub succeeded event data: %w", err))
+			pc.privateChannel.channel.client.sendError(fmt.Errorf("decoding sub succeeded event data: %w", err))
 		}
 
 		members := make(map[string]Member, len(subscriptionData.Presence.Hash))
@@ -169,26 +167,19 @@ func (c *presenceChannel) handleEvent(event string, data json.RawMessage) {
 			members[id] = member
 		}
 
-		c.mutex.Lock()
-		c.members = members
-		c.subscribed = true
+		pc.membersMutex.Lock()
+		pc.members = members
 
-		select {
-		case c.subscribeSuccess <- struct{}{}:
-		default:
+		pc.privateChannel.channel.handleEvent(event, data)
+
+		for _, member := range pc.members {
+			sendMemberAdded(pc.memberAddedChans, member)
 		}
+		pc.membersMutex.Unlock()
 
-		for _, member := range c.members {
-			sendMemberAdded(c.memberAddedChans, member)
-		}
-		c.mutex.Unlock()
-
-		event = pusherSubSucceeded
+	default:
+		pc.privateChannel.channel.handleEvent(event, data)
 	}
-
-	c.mutex.RLock()
-	sendDataMessage(c.boundEvents[event], data)
-	c.mutex.RUnlock()
 }
 
 func sendMemberAdded(channels map[chan Member]chanContext, member Member) {
@@ -213,95 +204,95 @@ func sendMemberRemoved(channels map[chan string]chanContext, id string) {
 	}
 }
 
-func (c *presenceChannel) BindMemberAdded() chan Member {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (pc *presenceChannel) BindMemberAdded() chan Member {
+	pc.membersMutex.Lock()
+	defer pc.membersMutex.Unlock()
 
 	ch := make(chan Member)
-	c.memberAddedChans[ch] = newChanContext()
+	pc.memberAddedChans[ch] = newChanContext()
 
 	return ch
 }
 
-func (c *presenceChannel) UnbindMemberAdded(chans ...chan Member) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (pc *presenceChannel) UnbindMemberAdded(chans ...chan Member) {
+	pc.membersMutex.Lock()
+	defer pc.membersMutex.Unlock()
 
 	// Remove all channels when no channels were specified
 	if len(chans) == 0 {
-		for _, chanCtx := range c.memberAddedChans {
+		for _, chanCtx := range pc.memberAddedChans {
 			chanCtx.cancel()
 		}
-		c.memberAddedChans = map[chan Member]chanContext{}
+		pc.memberAddedChans = map[chan Member]chanContext{}
 		return
 	}
 
 	// Remove given channels
 	for _, ch := range chans {
-		chanCtx, exists := c.memberAddedChans[ch]
+		chanCtx, exists := pc.memberAddedChans[ch]
 		if !exists {
 			continue
 		}
 
 		chanCtx.cancel()
-		delete(c.memberAddedChans, ch)
+		delete(pc.memberAddedChans, ch)
 	}
 }
 
-func (c *presenceChannel) BindMemberRemoved() chan string {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (pc *presenceChannel) BindMemberRemoved() chan string {
+	pc.membersMutex.Lock()
+	defer pc.membersMutex.Unlock()
 
 	ch := make(chan string)
-	c.memberRemovedChans[ch] = newChanContext()
+	pc.memberRemovedChans[ch] = newChanContext()
 
 	return ch
 }
 
-func (c *presenceChannel) UnbindMemberRemoved(chans ...chan string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (pc *presenceChannel) UnbindMemberRemoved(chans ...chan string) {
+	pc.membersMutex.Lock()
+	defer pc.membersMutex.Unlock()
 
 	// Remove all channels when no channels were specified
 	if len(chans) == 0 {
-		for _, chanCtx := range c.memberRemovedChans {
+		for _, chanCtx := range pc.memberRemovedChans {
 			chanCtx.cancel()
 		}
-		c.memberRemovedChans = map[chan string]chanContext{}
+		pc.memberRemovedChans = map[chan string]chanContext{}
 		return
 	}
 
 	// Remove given channels
 	for _, ch := range chans {
-		chanCtx, exists := c.memberRemovedChans[ch]
+		chanCtx, exists := pc.memberRemovedChans[ch]
 		if !exists {
 			continue
 		}
 
 		chanCtx.cancel()
-		delete(c.memberRemovedChans, ch)
+		delete(pc.memberRemovedChans, ch)
 	}
 }
 
-func (c *presenceChannel) Members() map[string]Member {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
+func (pc *presenceChannel) Members() map[string]Member {
+	pc.membersMutex.RLock()
+	defer pc.membersMutex.RUnlock()
 
 	// Maps are passed by reference, so a copy must be made to avoid giving the
 	// caller a reference to the internal map.
-	members := make(map[string]Member, len(c.members))
-	for id, member := range c.members {
+	members := make(map[string]Member, len(pc.members))
+	for id, member := range pc.members {
 		members[id] = member
 	}
 
 	return members
 }
 
-func (c *presenceChannel) Member(id string) *Member {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
+func (pc *presenceChannel) Member(id string) *Member {
+	pc.membersMutex.RLock()
+	defer pc.membersMutex.RUnlock()
 
-	member, ok := c.members[id]
+	member, ok := pc.members[id]
 	if ok {
 		return &member
 	}
@@ -309,21 +300,21 @@ func (c *presenceChannel) Member(id string) *Member {
 	return nil
 }
 
-func (c *presenceChannel) Me() (*Member, error) {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-
-	if !c.subscribed {
+func (pc *presenceChannel) Me() (*Member, error) {
+	if !pc.privateChannel.channel.IsSubscribed() {
 		return nil, ErrNotSubscribed
 	}
 
+	pc.membersMutex.RLock()
+	defer pc.membersMutex.RUnlock()
+
 	var data presenceChannelData
-	err := UnmarshalDataString(c.channelData.ChannelData, &data)
+	err := UnmarshalDataString(pc.channelData.ChannelData, &data)
 	if err != nil {
 		return nil, fmt.Errorf("invalid channel data: %w", err)
 	}
 
-	member, ok := c.members[data.UserID]
+	member, ok := pc.members[data.UserID]
 	if !ok {
 		return nil, ErrMissingMe
 	}
@@ -331,9 +322,9 @@ func (c *presenceChannel) Me() (*Member, error) {
 	return &member, nil
 }
 
-func (c *presenceChannel) MemberCount() int {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
+func (pc *presenceChannel) MemberCount() int {
+	pc.membersMutex.RLock()
+	defer pc.membersMutex.RUnlock()
 
-	return len(c.members)
+	return len(pc.members)
 }
