@@ -597,7 +597,7 @@ func TestClientListen(t *testing.T) {
 			subscribedChannels: map[string]internalChannel{
 				wantEvent.Channel: &channel{
 					boundEvents: map[string]boundDataChans{
-						wantEvent.Event: {dataChan: newChanContext()},
+						wantEvent.Event: {dataChan: make(chan struct{})},
 					},
 				},
 			},

@@ -78,8 +78,8 @@ type presenceChannel struct {
 	*privateChannel
 
 	membersMutex       sync.RWMutex
-	memberAddedChans   map[chan Member]chanContext
-	memberRemovedChans map[chan string]chanContext
+	memberAddedChans   map[chan Member]chan struct{}
+	memberRemovedChans map[chan string]chan struct{}
 	members            map[string]Member
 }
 
@@ -87,8 +87,8 @@ func newPresenceChannel(baseChannel *channel) *presenceChannel {
 	privateChannel := &privateChannel{channel: baseChannel}
 	return &presenceChannel{
 		privateChannel:     privateChannel,
-		memberAddedChans:   map[chan Member]chanContext{},
-		memberRemovedChans: map[chan string]chanContext{},
+		memberAddedChans:   map[chan Member]chan struct{}{},
+		memberRemovedChans: map[chan string]chan struct{}{},
 		members:            map[string]Member{},
 	}
 }
@@ -181,25 +181,25 @@ func (pc *presenceChannel) handleEvent(event string, data json.RawMessage) {
 	}
 }
 
-func sendMemberAdded(channels map[chan Member]chanContext, member Member) {
-	for ch, chanCtx := range channels {
-		go func(ch chan Member, member Member, chanCtx chanContext) {
+func sendMemberAdded(channels map[chan Member]chan struct{}, member Member) {
+	for ch, doneChan := range channels {
+		go func(ch chan Member, member Member, doneChan chan struct{}) {
 			select {
 			case ch <- member:
-			case <-chanCtx.ctx.Done():
+			case <-doneChan:
 			}
-		}(ch, member, chanCtx)
+		}(ch, member, doneChan)
 	}
 }
 
-func sendMemberRemoved(channels map[chan string]chanContext, id string) {
-	for ch, chanCtx := range channels {
-		go func(ch chan string, id string, chanCtx chanContext) {
+func sendMemberRemoved(channels map[chan string]chan struct{}, id string) {
+	for ch, doneChan := range channels {
+		go func(ch chan string, id string, doneChan chan struct{}) {
 			select {
 			case ch <- id:
-			case <-chanCtx.ctx.Done():
+			case <-doneChan:
 			}
-		}(ch, id, chanCtx)
+		}(ch, id, doneChan)
 	}
 }
 
@@ -208,7 +208,7 @@ func (pc *presenceChannel) BindMemberAdded() chan Member {
 	defer pc.membersMutex.Unlock()
 
 	ch := make(chan Member)
-	pc.memberAddedChans[ch] = newChanContext()
+	pc.memberAddedChans[ch] = make(chan struct{})
 
 	return ch
 }
@@ -219,21 +219,21 @@ func (pc *presenceChannel) UnbindMemberAdded(chans ...chan Member) {
 
 	// Remove all channels when no channels were specified
 	if len(chans) == 0 {
-		for _, chanCtx := range pc.memberAddedChans {
-			chanCtx.cancel()
+		for _, doneChan := range pc.memberAddedChans {
+			close(doneChan)
 		}
-		pc.memberAddedChans = map[chan Member]chanContext{}
+		pc.memberAddedChans = map[chan Member]chan struct{}{}
 		return
 	}
 
 	// Remove given channels
 	for _, ch := range chans {
-		chanCtx, exists := pc.memberAddedChans[ch]
+		doneChan, exists := pc.memberAddedChans[ch]
 		if !exists {
 			continue
 		}
 
-		chanCtx.cancel()
+		close(doneChan)
 		delete(pc.memberAddedChans, ch)
 	}
 }
@@ -243,7 +243,7 @@ func (pc *presenceChannel) BindMemberRemoved() chan string {
 	defer pc.membersMutex.Unlock()
 
 	ch := make(chan string)
-	pc.memberRemovedChans[ch] = newChanContext()
+	pc.memberRemovedChans[ch] = make(chan struct{})
 
 	return ch
 }
@@ -254,21 +254,21 @@ func (pc *presenceChannel) UnbindMemberRemoved(chans ...chan string) {
 
 	// Remove all channels when no channels were specified
 	if len(chans) == 0 {
-		for _, chanCtx := range pc.memberRemovedChans {
-			chanCtx.cancel()
+		for _, doneChan := range pc.memberRemovedChans {
+			close(doneChan)
 		}
-		pc.memberRemovedChans = map[chan string]chanContext{}
+		pc.memberRemovedChans = map[chan string]chan struct{}{}
 		return
 	}
 
 	// Remove given channels
 	for _, ch := range chans {
-		chanCtx, exists := pc.memberRemovedChans[ch]
+		doneChan, exists := pc.memberRemovedChans[ch]
 		if !exists {
 			continue
 		}
 
-		chanCtx.cancel()
+		close(doneChan)
 		delete(pc.memberRemovedChans, ch)
 	}
 }

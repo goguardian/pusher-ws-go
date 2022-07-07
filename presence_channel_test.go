@@ -100,7 +100,7 @@ func TestPresenceHandleEvent(t *testing.T) {
 
 		dataChan := make(chan json.RawMessage)
 		ch.boundEvents = map[string]boundDataChans{
-			event: {dataChan: newChanContext()},
+			event: {dataChan: make(chan struct{})},
 		}
 
 		ch.handleEvent(event, expectedData)
@@ -227,10 +227,10 @@ func TestPresenceMembers(t *testing.T) {
 		chan3 := make(chan Member)
 
 		ch := newPresenceChannel(&channel{})
-		ch.memberAddedChans = map[chan Member]chanContext{
-			chan1: newChanContext(),
-			chan2: newChanContext(),
-			chan3: newChanContext(),
+		ch.memberAddedChans = map[chan Member]chan struct{}{
+			chan1: make(chan struct{}),
+			chan2: make(chan struct{}),
+			chan3: make(chan struct{}),
 		}
 
 		ch.UnbindMemberAdded(chan1, chan2)
@@ -291,10 +291,10 @@ func TestPresenceMembers(t *testing.T) {
 		chan3 := make(chan string)
 
 		ch := newPresenceChannel(&channel{})
-		ch.memberRemovedChans = map[chan string]chanContext{
-			chan1: newChanContext(),
-			chan2: newChanContext(),
-			chan3: newChanContext(),
+		ch.memberRemovedChans = map[chan string]chan struct{}{
+			chan1: make(chan struct{}),
+			chan2: make(chan struct{}),
+			chan3: make(chan struct{}),
 		}
 
 		ch.UnbindMemberRemoved(chan1, chan2)

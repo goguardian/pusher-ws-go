@@ -1,7 +1,6 @@
 package pusher
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,17 +41,7 @@ type internalChannel interface {
 	handleEvent(event string, data json.RawMessage)
 }
 
-type chanContext struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-func newChanContext() chanContext {
-	ctx, cancel := context.WithCancel(context.Background())
-	return chanContext{ctx, cancel}
-}
-
-type boundDataChans map[chan json.RawMessage]chanContext
+type boundDataChans map[chan json.RawMessage]chan struct{}
 
 type channel struct {
 	name        string
@@ -178,7 +167,7 @@ func (c *channel) Bind(event string) chan json.RawMessage {
 		c.boundEvents[event] = boundDataChans{}
 	}
 
-	c.boundEvents[event][boundChan] = newChanContext()
+	c.boundEvents[event][boundChan] = make(chan struct{})
 
 	return boundChan
 }
@@ -188,8 +177,8 @@ func (c *channel) Unbind(event string, chans ...chan json.RawMessage) {
 	defer c.mutex.Unlock()
 
 	if len(chans) == 0 {
-		for _, chanCtx := range c.boundEvents[event] {
-			chanCtx.cancel()
+		for _, doneChan := range c.boundEvents[event] {
+			close(doneChan)
 		}
 		delete(c.boundEvents, event)
 		return
@@ -197,12 +186,12 @@ func (c *channel) Unbind(event string, chans ...chan json.RawMessage) {
 
 	eventBoundChans := c.boundEvents[event]
 	for _, boundChan := range chans {
-		chanCtx, exists := eventBoundChans[boundChan]
+		doneChan, exists := eventBoundChans[boundChan]
 		if !exists {
 			continue
 		}
 
-		chanCtx.cancel()
+		close(doneChan)
 		delete(eventBoundChans, boundChan)
 	}
 }
@@ -228,13 +217,13 @@ func (c *channel) handleEvent(event string, data json.RawMessage) {
 }
 
 func sendDataMessage(channels boundDataChans, data json.RawMessage) {
-	for boundChan, chanCtx := range channels {
-		go func(boundChan chan json.RawMessage, data json.RawMessage, chanCtx chanContext) {
+	for boundChan, doneChan := range channels {
+		go func(boundChan chan json.RawMessage, data json.RawMessage, doneChan chan struct{}) {
 			select {
 			case boundChan <- data:
-			case <-chanCtx.ctx.Done():
+			case <-doneChan:
 			}
-		}(boundChan, data, chanCtx)
+		}(boundChan, data, doneChan)
 	}
 }
 
