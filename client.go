@@ -16,14 +16,16 @@ const (
 	pingPayload = `{"event":"pusher:ping","data":"{}"}`
 	pongPayload = `{"event":"pusher:pong","data":"{}"}`
 
-	pusherPing                 = "pusher:ping"
-	pusherPong                 = "pusher:pong"
-	pusherError                = "pusher:error"
-	pusherSubscribe            = "pusher:subscribe"
-	pusherUnsubscribe          = "pusher:unsubscribe"
-	pusherConnEstablished      = "pusher:connection_established"
-	pusherSubSucceeded         = "pusher:subscription_succeeded"
-	pusherInternalSubSucceeded = "pusher_internal:subscription_succeeded"
+	pusherPing                  = "pusher:ping"
+	pusherPong                  = "pusher:pong"
+	pusherError                 = "pusher:error"
+	pusherSubscribe             = "pusher:subscribe"
+	pusherUnsubscribe           = "pusher:unsubscribe"
+	pusherConnEstablished       = "pusher:connection_established"
+	pusherSubSucceeded          = "pusher:subscription_succeeded"
+	pusherInternalSubSucceeded  = "pusher_internal:subscription_succeeded"
+	pusherInternalMemberAdded   = "pusher_internal:member_added"
+	pusherInternalMemberRemoved = "pusher_internal:member_removed"
 
 	localOrigin = "http://localhost/"
 
@@ -235,9 +237,16 @@ func (c *Client) listen() {
 	}
 }
 
-// Subscribe creates a subscription to the specified channel. Authentication will
-// be attempted for private and presence channels. If the channel has already been
-// subscribed, this method will return the existing Channel instance.
+// Subscribe creates a subscription to the specified channel. Authentication
+// will be attempted for private and presence channels. If the channel has
+// already been subscribed, this method will return the existing Channel
+// instance.
+//
+// A channel is always returned, regardless of any errors. The error value
+// indicates if the subscription succeeded. Failed subscriptions may be retried
+// with `Channel.Subscribe()`.
+//
+// See SubscribePresence() for presence channels.
 func (c *Client) Subscribe(channelName string, opts ...SubscribeOption) (Channel, error) {
 
 	c.mutex.RLock()
@@ -254,9 +263,7 @@ func (c *Client) Subscribe(channelName string, opts ...SubscribeOption) (Channel
 		case strings.HasPrefix(channelName, "private-"):
 			ch = &privateChannel{baseChan}
 		case strings.HasPrefix(channelName, "presence-"):
-			ch = &privateChannel{baseChan}
-			// TODO: implement presence channels
-			// ch = presenceChannel{baseChan}
+			ch = newPresenceChannel(baseChan)
 		default:
 			ch = baseChan
 		}
@@ -266,6 +273,26 @@ func (c *Client) Subscribe(channelName string, opts ...SubscribeOption) (Channel
 	}
 
 	return ch, ch.Subscribe(opts...)
+}
+
+// SubscribePresence creates a subscription to the specified presence channel.
+// If the channel has already been subscribed, this method will return the
+// existing channel instance.
+//
+// A channel is always returned, regardless of any errors. The error value
+// indicates if the subscription succeeded. Failed subscriptions may be retried
+// with `Channel.Subscribe()`.
+//
+// An error is returned if channelName is not a presence channel. Use
+// Subscribe() for other channel types.
+func (c *Client) SubscribePresence(channelName string, opts ...SubscribeOption) (PresenceChannel, error) {
+
+	if !strings.HasPrefix(channelName, "presence-") {
+		return nil, fmt.Errorf("invalid presence channel name, must start with 'presence-': %s", channelName)
+	}
+
+	ch, subscribeErr := c.Subscribe(channelName, opts...)
+	return ch.(*presenceChannel), subscribeErr
 }
 
 // Unsubscribe unsubscribes from the specified channel. Events will no longer

@@ -176,7 +176,7 @@ func TestChannelBind(t *testing.T) {
 func TestChannelUnbind(t *testing.T) {
 	t.Run("eventOnly", func(t *testing.T) {
 		ch := &channel{boundEvents: map[string]boundDataChans{
-			"foo": {make(chan json.RawMessage): struct{}{}},
+			"foo": {make(chan json.RawMessage): make(chan struct{})},
 		}}
 		ch.Unbind("foo")
 
@@ -191,9 +191,9 @@ func TestChannelUnbind(t *testing.T) {
 		ch3 := make(chan json.RawMessage)
 		ch := &channel{boundEvents: map[string]boundDataChans{
 			"foo": {
-				ch1: struct{}{},
-				ch2: struct{}{},
-				ch3: struct{}{},
+				ch1: make(chan struct{}),
+				ch2: make(chan struct{}),
+				ch3: make(chan struct{}),
 			},
 		}}
 		ch.Unbind("foo", ch1, ch3)
@@ -225,7 +225,7 @@ func TestChannelHandleEvent(t *testing.T) {
 		dataChan := make(chan json.RawMessage)
 		ch := &channel{
 			boundEvents: map[string]boundDataChans{
-				wantEvent: {dataChan: struct{}{}},
+				wantEvent: {dataChan: make(chan struct{})},
 			},
 		}
 
@@ -343,7 +343,7 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 				t.Errorf("Expected to get subscribe event, got %+v", event)
 			}
 
-			data := subscribeData{}
+			data := channelData{}
 			err = json.Unmarshal(event.Data, &data)
 			if err != nil {
 				panic(err)
@@ -393,7 +393,7 @@ func TestPrivateChannelSubscribe(t *testing.T) {
 				}
 			}
 
-			err = json.NewEncoder(w).Encode(subscribeData{
+			err = json.NewEncoder(w).Encode(channelData{
 				Auth: wantAuth,
 			})
 			if err != nil {

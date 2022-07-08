@@ -18,6 +18,9 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// TODO Implement Client.Error channel in all tests and fail the test if any
+// errors occur
+
 func TestUnmarshalDataString(t *testing.T) {
 	dest := map[string]interface{}{}
 	err := UnmarshalDataString(json.RawMessage(`"{\"foo\":\"A\",\"bar\":1}"`), &dest)
@@ -328,9 +331,26 @@ func TestClientSubscribe(t *testing.T) {
 				t.Errorf("Expected event to be %q, got %q", pusherSubscribe, evt.Event)
 			}
 
+			data, err := json.Marshal(`
+				{
+					"presence": {
+						"ids": ["1", "2"],
+						"hash": {
+							"1": { "name": "name-1" },
+							"2": { "name": "name-2" }
+						},
+						"count": 2
+					}
+				}
+			`)
+			if err != nil {
+				t.Fatal("error marshaling data: ", err)
+			}
+
 			err = websocket.JSON.Send(ws, Event{
 				Event:   pusherInternalSubSucceeded,
 				Channel: channelName,
+				Data:    data,
 			})
 			if err != nil {
 				panic(err)
@@ -357,12 +377,12 @@ func TestClientSubscribe(t *testing.T) {
 
 		go client.listen()
 
-		subCh, err := client.Subscribe(channelName)
+		subCh, err := client.SubscribePresence(channelName)
 		if err != nil {
 			panic(err)
 		}
 
-		baseCh := subCh.(*privateChannel)
+		baseCh := subCh.(*presenceChannel)
 		if baseCh.name != channelName {
 			t.Errorf("Expected channel name to be %q, got %q", channelName, baseCh.name)
 		}
@@ -577,7 +597,7 @@ func TestClientListen(t *testing.T) {
 			subscribedChannels: map[string]internalChannel{
 				wantEvent.Channel: &channel{
 					boundEvents: map[string]boundDataChans{
-						wantEvent.Event: {dataChan: struct{}{}},
+						wantEvent.Event: {dataChan: make(chan struct{})},
 					},
 				},
 			},
