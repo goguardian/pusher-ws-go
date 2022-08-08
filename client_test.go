@@ -525,7 +525,7 @@ func TestClientHeartbeat(t *testing.T) {
 		wg.Wait()
 	})
 
-	t.Run("timerReset panic", func(t *testing.T) {
+	t.Run("timerReset doesn't block", func(t *testing.T) {
 		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {}))
 		defer srv.Close()
 
@@ -538,7 +538,7 @@ func TestClientHeartbeat(t *testing.T) {
 		client := &Client{
 			connected:          true,
 			activityTimerReset: make(chan struct{}, 1),
-			activityTimer:      time.NewTimer(1 * time.Hour),
+			activityTimer:      time.NewTimer(1024 * time.Hour),
 			activityTimeout:    0,
 			ws:                 ws,
 		}
@@ -546,11 +546,20 @@ func TestClientHeartbeat(t *testing.T) {
 		go client.heartbeat()
 		runtime.Gosched()
 
-		// client.Disconnect()
-		// client.activityTimerReset <- struct{}{}
-		client.resetActivityTimer()
+		// If there's a bug in the implementation, this will block forever.
+		// The test should timeout.
+		done := make(chan struct{})
+		go func() {
+			client.resetActivityTimer()
+			close(done)
+		}()
 
-		<-client.activityTimer.C
+		select {
+		case <-done:
+			// test passed
+		case <-time.After(3 * time.Second):
+			t.Errorf("Timeout waiting for resetActivityTimer to finish")
+		}
 	})
 }
 
