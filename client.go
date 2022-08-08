@@ -154,6 +154,7 @@ func (c *Client) Connect(appKey string) error {
 		c.socketID = connData.SocketID
 		c.activityTimeout = time.Duration(connData.ActivityTimeout) * time.Second
 		c.activityTimer = time.NewTimer(c.activityTimeout)
+		c.activityTimerReset = make(chan struct{}, 1)
 		c.boundEvents = map[string]boundEventChans{}
 		c.subscribedChannels = subscribedChannels{}
 
@@ -174,7 +175,12 @@ func (c *Client) isConnected() bool {
 }
 
 func (c *Client) resetActivityTimer() {
-	go func() { c.activityTimerReset <- struct{}{} }()
+	select {
+	case c.activityTimerReset <- struct{}{}:
+		return
+	default:
+		// Timer reset is already requested.
+	}
 }
 
 func (c *Client) heartbeat() {
@@ -185,6 +191,7 @@ func (c *Client) heartbeat() {
 				<-c.activityTimer.C
 			}
 			c.activityTimer.Reset(c.activityTimeout)
+
 		case <-c.activityTimer.C:
 			websocket.Message.Send(c.ws, pingPayload)
 			// TODO: implement timeout/reconnect logic
@@ -248,7 +255,6 @@ func (c *Client) listen() {
 //
 // See SubscribePresence() for presence channels.
 func (c *Client) Subscribe(channelName string, opts ...SubscribeOption) (Channel, error) {
-
 	c.mutex.RLock()
 	ch, ok := c.subscribedChannels[channelName]
 	c.mutex.RUnlock()
@@ -286,7 +292,6 @@ func (c *Client) Subscribe(channelName string, opts ...SubscribeOption) (Channel
 // An error is returned if channelName is not a presence channel. Use
 // Subscribe() for other channel types.
 func (c *Client) SubscribePresence(channelName string, opts ...SubscribeOption) (PresenceChannel, error) {
-
 	if !strings.HasPrefix(channelName, "presence-") {
 		return nil, fmt.Errorf("invalid presence channel name, must start with 'presence-': %s", channelName)
 	}

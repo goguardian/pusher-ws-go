@@ -53,13 +53,14 @@ func TestClientIsConnected(t *testing.T) {
 }
 
 func TestClientResetActivityTimer(t *testing.T) {
-	resetChan := make(chan struct{})
-	client := &Client{activityTimerReset: resetChan}
+	client := &Client{
+		activityTimerReset: make(chan struct{}, 1),
+	}
 
-	wg := &sync.WaitGroup{}
+	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		<-resetChan
+		<-client.activityTimerReset
 		wg.Done()
 	}()
 
@@ -176,7 +177,7 @@ func TestClientSendEvent(t *testing.T) {
 
 	client := &Client{
 		ws:                 ws,
-		activityTimerReset: make(chan struct{}),
+		activityTimerReset: make(chan struct{}, 1),
 	}
 	defer client.Disconnect()
 
@@ -447,11 +448,12 @@ func TestClientHeartbeat(t *testing.T) {
 		timeChan := make(chan time.Time)
 		client := &Client{
 			connected:          false,
-			activityTimerReset: make(chan struct{}),
+			activityTimerReset: make(chan struct{}, 1),
 			activityTimer:      &time.Timer{C: timeChan},
 		}
 
 		go func() {
+			client.activityTimerReset <- struct{}{}
 			client.activityTimerReset <- struct{}{}
 			t.Errorf("Expected not to block on send to activityTimerReset, but message was received")
 		}()
@@ -474,7 +476,7 @@ func TestClientHeartbeat(t *testing.T) {
 
 		client := &Client{
 			connected:          true,
-			activityTimerReset: make(chan struct{}),
+			activityTimerReset: make(chan struct{}, 1),
 			activityTimer:      time.NewTimer(1 * time.Hour),
 			activityTimeout:    0,
 			ws:                 ws,
@@ -487,7 +489,6 @@ func TestClientHeartbeat(t *testing.T) {
 		client.activityTimerReset <- struct{}{}
 
 		<-client.activityTimer.C
-
 	})
 
 	t.Run("timerExpire", func(t *testing.T) {
@@ -522,6 +523,43 @@ func TestClientHeartbeat(t *testing.T) {
 		go client.heartbeat()
 
 		wg.Wait()
+	})
+
+	t.Run("timerReset doesn't block", func(t *testing.T) {
+		srv := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {}))
+		defer srv.Close()
+
+		wsURL := strings.Replace(srv.URL, "http", "ws", 1)
+		ws, err := websocket.Dial(wsURL, "ws", localOrigin)
+		if err != nil {
+			panic(err)
+		}
+
+		client := &Client{
+			connected:          true,
+			activityTimerReset: make(chan struct{}, 1),
+			activityTimer:      time.NewTimer(1024 * time.Hour),
+			activityTimeout:    0,
+			ws:                 ws,
+		}
+
+		go client.heartbeat()
+		runtime.Gosched()
+
+		// If there's a bug in the implementation, this will block forever.
+		// The test should timeout.
+		done := make(chan struct{})
+		go func() {
+			client.resetActivityTimer()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// test passed
+		case <-time.After(3 * time.Second):
+			t.Errorf("Timeout waiting for resetActivityTimer to finish")
+		}
 	})
 }
 
@@ -812,6 +850,22 @@ func TestClientConnect(t *testing.T) {
 		wantTimeout := time.Duration(wantConnData.ActivityTimeout) * time.Second
 		if client.activityTimeout != wantTimeout {
 			t.Errorf("Expected client activity timeout to be %v, got %v", wantTimeout, client.activityTimeout)
+		}
+		if client.activityTimer == nil {
+			t.Errorf("Expected client activity timer to be non-nil")
+		}
+		if client.activityTimerReset == nil {
+			t.Errorf("Expected client activity timer reset channel to be non-nil")
+		}
+		if cap(client.activityTimerReset) != 1 {
+			t.Errorf("Expected client activity timer reset channel to have capacity 1, got %v",
+				cap(client.activityTimerReset))
+		}
+		if client.boundEvents == nil {
+			t.Errorf("Expected client bound events to be non-nil")
+		}
+		if client.subscribedChannels == nil {
+			t.Errorf("Expected client subscribed channels to be non-nil")
 		}
 	})
 }
