@@ -278,7 +278,7 @@ func TestChannelTrigger(t *testing.T) {
 
 	client := &Client{
 		ws:                 ws,
-		activityTimerReset: make(chan struct{}),
+		activityTimerReset: make(chan struct{}, 1),
 	}
 	defer client.Disconnect()
 
