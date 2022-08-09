@@ -1,3 +1,4 @@
+// Deprecated: use github.com/goguardian/pusher-ws-go/v2 instead.
 module github.com/goguardian/pusher-ws-go
 
 go 1.17
